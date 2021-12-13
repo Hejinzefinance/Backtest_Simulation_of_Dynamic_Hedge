@@ -6,7 +6,7 @@ class OptionPortfolio:
     price_dict = BasicData.PRICE_DICT
     def __init__(self):
         self.public_columns = ['sigma','left_days','left_times','sigma_T','stock_price']
-        self.greek_columns = ['cash_delta', 'cash_gamma','pos_vega','cash_theta', 'option_value']
+        self.greek_columns = ['cash_delta', 'cash_gamma', 'option_value']
         self.option_basket = []
         self.reset()
 
@@ -17,50 +17,123 @@ class OptionPortfolio:
         self.end_date = None
         self.option_fee = 0
         self.trade_dates = None
-        self.trade_datetimes = None
-
-    def add_option(self,option_class,option_position,**option_paras):
-        option_dict = dict().fromkeys(['option_obj','option_pos'])
-        option_dict['option_obj'] = eval(option_class)()
-        option_dict['option_obj'].set_paras_by_dict(option_paras)
-        option_dict['option_pos'] = option_position
-        option_dict['option_obj'].calculate_greeks()
-        if len(self.option_basket)==0:
-            self.get_paras_from_current_option(option_dict['option_obj'])
-        self.update_paras(option_dict['option_obj'])
-        self.option_basket.append(option_dict)
 
     def add_option_by_dict(self,option_class,option_position,option_paras):
+        if option_class == 'VanillaCall' or option_class == 'VanillaPut':
+            option_dict = self.add_vanilla_option_by_dict(option_class,option_position,option_paras)
+            self.get_paras_from_current_option(option_dict['option_obj'])
+            self.init_public_greek_df()
+            self.update_paras(option_dict)
+            self.option_basket.append(option_dict)
+            self.get_vanilla_info()
+        elif option_class == 'ParticipateCall':
+            option_para_dict1 = {'notional':option_paras['notional'],
+                                 'start_date':option_paras['start_date'],
+                                 'end_date':option_paras['end_date'],
+                                 'K':option_paras['K_low'],
+                                 'option_fee':option_paras['option_fee'],
+                                 'stock_code':option_paras['stock_code'],
+                                 'start_price':option_paras['start_price']}
+            option_para_dict2 = {'notional': option_paras['notional'],
+                                 'start_date': option_paras['start_date'],
+                                 'end_date': option_paras['end_date'],
+                                 'K': option_paras['K_high'],
+                                 'option_fee': option_paras['notional'],
+                                 'stock_code': option_paras['stock_code'],
+                                 'start_price': option_paras['start_price']}
+            option_dict1 = self.add_vanilla_option_by_dict('VanillaCall',option_position*option_paras['p_ratio1'], option_para_dict1)
+            option_dict2 = self.add_vanilla_option_by_dict('VanillaCall', option_position*(round(option_paras['p_ratio2']-option_paras['p_ratio1'],2)),option_para_dict2)
+            self.get_paras_from_current_option(option_dict1['option_obj'])
+            self.init_public_greek_df()
+            self.update_paras(option_dict1)
+            self.update_paras(option_dict2)
+            self.option_basket.append(option_dict1)
+            self.option_basket.append(option_dict2)
+            self.get_participate_call_info()
+        elif option_class == 'SpreadCall':
+            option_para_dict1 = {'notional':option_paras['notional'],
+                                 'start_date':option_paras['start_date'],
+                                 'end_date':option_paras['end_date'],
+                                 'K':option_paras['K_low'],
+                                 'option_fee':option_paras['option_fee'],
+                                 'stock_code':option_paras['stock_code'],
+                                 'start_price':option_paras['start_price']}
+            option_para_dict2 = {'notional': option_paras['notional'],
+                                 'start_date': option_paras['start_date'],
+                                 'end_date': option_paras['end_date'],
+                                 'K': option_paras['K_high'],
+                                 'option_fee': option_paras['notional'],
+                                 'stock_code': option_paras['stock_code'],
+                                 'start_price': option_paras['start_price']}
+            option_dict1 = self.add_vanilla_option_by_dict('VanillaCall',option_position*1, option_para_dict1)
+            option_dict2 = self.add_vanilla_option_by_dict('VanillaCall', option_position*(-1),option_para_dict2)
+            self.get_paras_from_current_option(option_dict1['option_obj'])
+            self.init_public_greek_df()
+            self.update_paras(option_dict1)
+            self.update_paras(option_dict2)
+            self.option_basket.append(option_dict1)
+            self.option_basket.append(option_dict2)
+            self.get_spread_option_info()
+
+    def add_vanilla_option_by_dict(self,option_class,option_position,option_paras):
+        '''
+        :param option_paras:
+            notional
+            start_date
+            end_date
+            K
+            r
+            option_fee
+            stock_code
+            start_price
+        '''
         option_dict = dict().fromkeys(['option_obj','option_pos'])
         option_dict['option_obj'] = eval(option_class)()
         option_dict['option_obj'].set_paras_by_dict(option_paras)
         option_dict['option_pos'] = option_position
         option_dict['option_obj'].calculate_greeks()
-        if len(self.option_basket)==0:
-            self.get_paras_from_current_option(option_dict['option_obj'])
-        self.update_paras(option_dict)
-        self.option_basket.append(option_dict)
-        self.get_option_name()
-    
-    def get_option_name(self):
-        if len(self.option_basket)==1:
-            self.option_name = str(type(self.option_basket[0]['option_obj'])).strip("'>").split('.')[-1]
-            self.strike_price = self.option_basket[0]['option_obj'].K
+        return option_dict
+
+    def get_vanilla_info(self):
+        self.option_name = str(type(self.option_basket[0]['option_obj'])).strip("'>").split('.')[-1]
+        self.strike_price = self.option_basket[0]['option_obj'].K
+        self.option_info = '期权类型:{0:s}，名义金额:{1:,.0f}，标的:{2:s}，期权费:{3:,.0f}，执行价:{4:,.2f}'.format(
+            self.option_name, self.notional, self.stock_code, self.option_fee, self.strike_price)
+
+    def get_participate_call_info(self):
+        self.option_name = '参与式看涨'
+        self.strike_price1 = self.option_basket[0]['option_obj'].K
+        self.strike_price2 = self.option_basket[1]['option_obj'].K
+        self.option_info = '期权类型:{0:s}，名义金额:{1:,.0f}，标的:{2:s}，期权费:{3:,.0f}，低执行价:{4:,.2f}，高执行价:{5:,.2f}'.format(\
+            self.option_name, self.notional, self.stock_code, self.option_fee, self.strike_price1,self.strike_price2)
+
+    def get_spread_option_info(self):
+        option_class = str(type(self.option_basket[0]['option_obj'])).strip("'>").split('.')[-1]
+        option_pos1 = self.option_basket[0]['option_pos']
+        if option_class == 'VanillaCall':
+            self.option_name = '看涨价差'
+        else:
+            self.option_name = '看跌价差'
+        self.strike_price1 = self.option_basket[0]['option_obj'].K
+        self.strike_price2 = self.option_basket[1]['option_obj'].K
+        self.option_info = '期权类型:{0:s}，名义金额:{1:,.0f}，标的:{2:s}，期权费:{3:,.0f}，低执行价:{4:,.2f}，高执行价:{5:,.2f}'.format(\
+            self.option_name, self.notional, self.stock_code, self.option_fee, self.strike_price1,self.strike_price2)
 
     def get_paras_from_current_option(self,option):
         self.stock_code = option.stock_code
         self.start_date = option.start_date
         self.end_date = option.end_date
         self.trade_dates = option.trade_dates
-        self.trade_datetimes = option.trade_datetimes
-        self.public_df = pd.DataFrame(index=self.trade_datetimes, columns=self.public_columns)
+        self.notional = option.notional
+        self.option_fee = option.option_fee
+        self.public_df = pd.DataFrame(index=self.trade_dates, columns=self.public_columns)
         self.public_df.loc[:,:] = option.greek_df.loc[:,['sigma','left_days','left_times','sigma_T','stock_price']]
-        self.greek_df = pd.DataFrame(0,index=self.trade_datetimes, columns=self.greek_columns)
+
+    def init_public_greek_df(self):
+        self.greek_df = pd.DataFrame(0, index=self.trade_dates, columns=self.greek_columns)
 
     def update_paras(self,option):
-        self.notional += option['option_obj'].notional
-        self.option_fee += option['option_obj'].option_fee
-        self.greek_df.loc[:,:] += (option['option_pos'])*option['option_obj'].greek_df.loc[:,['cash_delta', 'cash_gamma','pos_vega','cash_theta', 'option_value']]
+        self.greek_df.loc[:,:] += (option['option_pos'])*option['option_obj'].greek_df.loc[:,['cash_delta', 'cash_gamma', 'option_value']]
 
     def get_greeks(self):
         return self.greek_df
